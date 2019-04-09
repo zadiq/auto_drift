@@ -1,0 +1,3 @@
+Training multiple models with different dynamic and control algorithm parameters
+to create a collection of diverse control models. This is used in Diverse Models - Model
+Blending Analysis.

@@ -1,0 +1,376 @@
+#! /usr/bin/env python
+
+import rospy
+import time
+import struct
+import json
+import socket
+import SocketServer as socketserver
+import math
+from tf.transformations import euler_from_quaternion
+from ackermann_msgs.msg import AckermannDrive
+from gazebo_msgs.srv import (
+    GetModelState, SetPhysicsProperties,
+    SetPhysicsPropertiesRequest
+)
+from gazebo_msgs.msg import ODEPhysics
+from pynput.keyboard import Key, Listener
+from std_srvs.srv import Empty
+from std_msgs.msg import Float64
+from geometry_msgs.msg import Vector3
+from drift_controller.msg import State
+from threading import Thread
+
+
+class ServerHandler(socketserver.BaseRequestHandler):
+
+    def handle(self):
+        # print("message coming through")
+        try:
+            raw_data = self.receive_data()
+            if not raw_data:
+                raise Exception("Data received is empty!")
+            data = json.loads(raw_data.decode('ascii'))
+            self.server.processor(data)
+        except Exception as e:
+            self.server.exception = e
+
+    def receive_data(self):
+        raw_data_len = self.receive_all(4)
+        if not raw_data_len:
+            return None
+        data_len = struct.unpack('>I', raw_data_len)[0]
+        return self.receive_all(data_len)
+
+    def receive_all(self, n):
+        data = b''
+        while len(data) < n:
+            packet = self.request.recv(n - len(data))
+            if not packet:
+                return None
+            data += packet
+        return data
+
+
+class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    pass
+
+
+class ServiceHandler:
+
+    def __init__(self, name, msg_type):
+        self.name = name
+        self.msg_type = msg_type
+        rospy.wait_for_service(self.name)
+        self.service = rospy.ServiceProxy(self.name, msg_type)
+
+    def __call__(self, *args, **kwargs):
+        rospy.wait_for_service(self.name)
+        return self.service(*args, **kwargs)
+
+
+class AckermannRosHandler(object):
+
+    def __init__(self):
+        rospy.init_node("ackermann_controller", anonymous=True)
+        self.control_msg = AckermannDrive()
+        self.states_msg = State()
+
+        # publishers
+        self.control_pub = rospy.Publisher("ackermann_cmd", AckermannDrive, queue_size=100)
+        self.states_pub = rospy.Publisher("/gazebo/ack_model_states", State, queue_size=100)
+
+        # services
+        self.reset_world = ServiceHandler("/gazebo/reset_world", Empty)
+        self.pause_physics = ServiceHandler('/gazebo/pause_physics', Empty)
+        self.unpause_physics = ServiceHandler('/gazebo/unpause_physics', Empty)
+        self.get_model_states = ServiceHandler('/gazebo/get_model_state', GetModelState)
+        self.set_physics = ServiceHandler('/gazebo/set_physics_properties', SetPhysicsProperties)
+        self.rate = rospy.Rate(30)
+
+        # Physics parameters
+        self.gravity = Vector3()
+        self.ode_config = ODEPhysics()
+
+    def get_physic_request(self, **kwargs):
+        time_step = Float64(kwargs.get('time_step', 0.001))
+        max_update_rate = Float64(kwargs.get('max_update_rate', 1000.))
+
+        self.gravity.x = kwargs.get('gravity_x', 0)
+        self.gravity.y = kwargs.get('gravity_y', 0)
+        self.gravity.z = kwargs.get('gravity_z', -9.8)
+
+        self.ode_config.auto_disable_bodies = kwargs.get('disable_body', False)
+        self.ode_config.sor_pgs_precon_iters = kwargs.get('pgs_precon_iters', 0)
+        self.ode_config.sor_pgs_iters = kwargs.get('pgs__iters', 50)
+        self.ode_config.sor_pgs_w = kwargs.get('pgs_w', 1.3)
+        self.ode_config.sor_pgs_rms_error_tol = kwargs.get('rms_error_tol', 0.0)
+        self.ode_config.contact_surface_layer = kwargs.get('contact_surface_layer', 0.001)
+        self.ode_config.contact_max_correcting_vel = kwargs.get('max_correcting_vel', 100.0)
+        self.ode_config.cfm = kwargs.get('cfm', 0.0)
+        self.ode_config.erp = kwargs.get('erp', 0.2)
+        self.ode_config.max_contacts = kwargs.get('max_contacts', 20)
+
+        request = SetPhysicsPropertiesRequest()
+        request.time_step = time_step.data
+        request.max_update_rate = max_update_rate.data
+        request.gravity = self.gravity
+        request.ode_config = self.ode_config
+
+        return request
+
+
+class AckermannController(AckermannRosHandler):
+
+    def __init__(self, host="localhost", port=9091):
+
+        # create server
+        self.server = ThreadedTCPServer((host, port), ServerHandler)
+        self.server.processor = self.process_data
+        self.server.exception = None
+        self.exception = None
+        ip, host = self.server.server_address
+        server_thread = Thread(target=self.server.serve_forever)
+        server_thread.daemon = True
+        server_thread.start()
+        print("Serving Ackermann controller at ({}, {})".format(ip, host))
+
+        #  expected data keys from Ackermann Interface
+        self.data_keys = [
+            'action',  # action data {steering, throttle}
+            'states',  # state data
+            'error',
+            'request_action',  # ready for next action data
+            'reset_world',  # reset world data
+            'request_states',  # retrieve state from controller
+            'set_physics',  # used to set physics properties
+        ]
+
+        # interface server address
+        self.int_server_address = ("localhost", 9190)
+
+        # ROS
+        super(AckermannController, self).__init__()
+        self.send({'request_action': True})
+
+    def run(self):
+        while not rospy.is_shutdown():
+            # request for action
+            if self.exception:
+                rospy.loginfo(self.exception)
+                raise self.exception
+
+            # if self.server.exception:
+            #     rospy.loginfo(self.server.exception)
+            #     raise self.server.exception
+
+            self.rate.sleep()
+
+    def get_states(self):
+        coord = self.inf_tries(self.get_model_states, "ackermann_vehicle", "world")
+        # coord = self.model_states("ackermann_vehicle", "world")
+        states = {}
+
+        # calculate yaw from quaternion
+        q = coord.pose.orientation
+        pos = coord.pose.position
+        _, _, yaw = euler_from_quaternion([
+            q.x, q.y, q.z, q.w
+        ])
+
+        # calculate vx and vy of the ackermann vehicle
+        # using world frame velocity.
+        world_vx = coord.twist.linear.x
+        world_vy = coord.twist.linear.y
+        vx = (world_vx * math.cos(yaw)) + (world_vy * math.sin(yaw))
+        vy = (-world_vx * math.sin(yaw)) + (world_vy * math.cos(yaw))
+        omega = coord.twist.angular.z
+
+        # Publish states
+        states['vx'] = self.states_msg.vx = vx
+        states['vy'] = self.states_msg.vy = vy
+        states['omega'] = self.states_msg.omega = omega
+        states['x'] = pos.x
+        states['y'] = pos.y
+        states['yaw'] = yaw
+        self.states_pub.publish(self.states_msg)
+
+        return states
+
+    @staticmethod
+    def inf_tries(func, *args, **kwargs):
+        while True:
+            try:
+                return func(*args, **kwargs)
+            except (rospy.ServiceException, Exception) as e:
+                time.sleep(.01)
+                # self.exception = e
+                print("retrying {}".format(func))
+
+    def process_data(self, data):
+        """process incoming data"""
+        response = {
+            'error': False
+        }
+
+        if data.get('action') is not None:
+            self.control_msg.speed = data['action']['throttle']
+            self.control_msg.steering_angle = data['action']['steering']
+            self.inf_tries(self.unpause_physics)
+            self.control_pub.publish(self.control_msg)
+            time.sleep(0.01)
+            self.inf_tries(self.pause_physics)
+            response['states'] = self.get_states()
+
+            # ack availability for next action
+            response['request_action'] = True
+
+        if data.get('reset'):
+            # TODO resolve this, it require two calls to work
+            for _ in range(2):
+                self.unpause_physics()
+                time.sleep(0.01)
+                self.control_msg.speed = 0
+                self.control_msg.steering_angle = 0
+                self.control_pub.publish(self.control_msg)
+                time.sleep(0.01)
+                self.reset_world()
+                self.pause_physics()
+                # self.set_physics(self.get_physic_request())
+
+        if data.get('request_states'):
+            response['states'] = self.get_states()
+
+        if data.get('set_physics'):
+            self.pause_physics()
+            physics = data['set_physics']
+            self.set_physics(self.get_physic_request(**physics))
+
+        self.send(response)
+
+    def send(self, data):
+        try:
+            ros_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            ros_client.settimeout(3)
+            ros_client.connect(self.int_server_address)
+            data = bytes(json.dumps(data))
+            data = struct.pack('>I', len(data)) + data
+            ros_client.sendall(data)
+            ros_client.close()
+        except Exception as e:
+            self.exception = e
+
+
+def keyboard_listener(control_map):
+    """"""
+    def on_press(key):
+        if key == Key.right:
+            control_map['steering'] = -0.15
+        if key == Key.left:
+            control_map['steering'] = 0.15
+        if key == Key.up:
+            control_map['speed'] = 4
+        if key == Key.down:
+            control_map['reset'] = True
+
+    def on_release(key):
+        control_map['steering'] = 0
+        control_map['reset'] = False
+        control_map['speed'] = 0
+
+        if key == Key.alt:
+            control_map['pause'] = True
+
+    listener = Listener(on_press=on_press, on_release=on_release)
+    listener.start()
+    listener.wait()
+
+    return listener
+
+
+def publish_steering():
+    control_pub = rospy.Publisher("ackermann_cmd", AckermannDrive, queue_size=100)
+    # cord_pub = rospy.Publisher("/gazebo/set_model_state", ModelState, queue_size=100)
+
+    rospy.init_node("drift_steering", anonymous=True)
+    rospy.wait_for_service("/gazebo/reset_world")
+    reset_world = rospy.ServiceProxy("/gazebo/reset_world", Empty)
+    pause_physics = rospy.ServiceProxy('/gazebo/pause_physics', Empty)
+    unpause_physics = rospy.ServiceProxy('/gazebo/unpause_physics', Empty)
+
+    r = rospy.Rate(30)
+
+    control_map = {
+        "steering": 0,
+        "speed": 0,
+        "reset": False,
+        'pause': False,
+        'unpause': False,
+    }
+    listener = keyboard_listener(control_map)
+
+    msg = AckermannDrive()
+    # cord_msg = ModelState(model_name="ackermann_vehicle")
+
+    msg.steering_angle = 0  # apply 45 deg steering
+    msg.steering_angle_velocity = 0.0  # max velocity possible
+    msg.speed = 0  # apply 10m/s
+    msg.acceleration = 0.0  # max acceleration possible
+    msg.jerk = 0.0  # maximum jerk possible
+
+    while not rospy.is_shutdown():
+        msg.steering_angle = control_map['steering']
+        msg.speed = control_map['speed']
+
+        if control_map['reset']:
+            try:
+                reset_world()
+                control_map['reset'] = False
+            except rospy.ServiceException as e:
+                print("Error while trying to reset world, {}".format(e))
+
+        if control_map['pause']:
+            try:
+                pause_physics()
+                time.sleep(3)
+                unpause_physics()
+                control_map['pause'] = False
+            except rospy.ServiceException as e:
+                print("Error while trying to pausing physics, {}".format(e))
+
+        if control_map['unpause']:
+            try:
+                unpause_physics()
+                control_map['unpause'] = False
+            except rospy.ServiceException as e:
+                print("Error while trying to pausing physics, {}".format(e))
+
+        if server.data:
+            rospy.loginfo(server.data)
+            server.data = None
+
+        if server.exception:
+            raise server.exception
+
+        control_pub.publish(msg)
+        r.sleep()
+
+    return listener
+
+
+if __name__ == "__main__":
+    lis = None
+    try:
+        # server = ThreadedTCPServer(("localhost", 9091), ServerHandler)
+        # server.data = None
+        # server.exception = None
+        # server_thread = Thread(target=server.serve_forever)
+        # server_thread.daemon = True
+        # server_thread.start()
+        # lis = publish_steering()
+        acker = AckermannController()
+        acker.run()
+    except rospy.ROSInterruptException:
+        if lis is not None:
+            lis.stop()
+        print("Ackermann controller exited gracefully!!!")

@@ -1,0 +1,58 @@
+{
+    "action_bound": 0.024369393582936685,
+    "action_dim": 1,
+    "actor_layer_1": 450,
+    "actor_layer_2": 300,
+    "actor_lr": 0.0001,
+    "batch_size": 20,
+    "buffer_size": 1000000,
+    "critic_layer_1": 450,
+    "critic_layer_2": 300,
+    "critic_lr": 0.001,
+    "drive_dur": 20,
+    "ds": "three",
+    "dynamics": {
+        "B": 6,
+        "C": 10.49,
+        "D": 1942,
+        "Cm1": 1101,
+        "Cm2": 15,
+        "Cr": 132,
+        "Cd": 38
+    },
+    "gamma": 0.99,
+    "ignore": true,
+    "max_episodes": 10000000,
+    "print_interval": 10,
+    "reward_params": {
+        "sigma": 0.9
+    },
+    "reward_version": "v1",
+    "save_ep_over": -299,
+    "seed": 4112,
+    "sigma": 0.005,
+    "stack_len": 1,
+    "state_dim": 3,
+    "tau": 0.001,
+    "use_batch_norm": false,
+    "actor_network": [
+        [
+            450,
+            false,
+            "relu"
+        ],
+        [
+            300,
+            false,
+            "relu"
+        ]
+    ],
+    "critic_network": [
+        [
+            450,
+            false,
+            "relu"
+        ]
+    ],
+     "critic_last_layer": 300
+}
