@@ -298,8 +298,8 @@ limitations under the License.
 
     <gazebo reference="${lr_prefix}_${fr_prefix}_wheel">
       <material>Gazebo/Black</material>
-      <mu1>0.4</mu1>
-      <mu2>0.4</mu2>
+      <mu1>0.39</mu1>
+      <mu2>0.37</mu2>
     </gazebo>
   </xacro:macro>
 

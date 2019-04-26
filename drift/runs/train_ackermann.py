@@ -19,10 +19,10 @@ def pprint(e, obj):  # pretty print episode updates
 
 class Params(DDPGParams, ParamsBase):
     """"""
-    path = "/home/zadiq/uni/Personal Project/data/15-03-2018/ddpg_run_5"  # path to model
+    path = "/home/zadiq/dev/@p/auto_drift/data/3D/ddpg_run_1"  # path to model
     seed = 434
     reward_v = "v1"
-    desired_state = 9
+    desired_state = 10
     reward_params = {'sigma': .9}
     sigma = 0.001
     # sigma = 0.001

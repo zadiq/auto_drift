@@ -23,14 +23,14 @@ def simulate_func(model):
     intervals = 20, 5  # left, right turn intervals
     model.sequence.clear()
     model.reset()
-    while t <= 20:
+    while t <= 10:
         if i <= intervals[0]:  # left turn
             s = np.radians(10)
         elif intervals[0] < i < np.sum(intervals):  # right turn
             s = 0
         else:  # reset
             i = 0
-        d = 3.5
+        d = 4
         model.sequence(model(s, d))
         i += 1
         t += model.dt

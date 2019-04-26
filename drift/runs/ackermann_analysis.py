@@ -14,7 +14,7 @@ tf.logging.set_verbosity(tf.logging.ERROR)
 
 
 class Params(ParamsBase, DDPGParams):
-    base_path = "/home/zadiq/uni/Personal Project/data/3D Simulation/15-03-2018/ddpg_run_3"
+    base_path = "/home/zadiq/dev/@p/auto_drift/data/3D/ddpg_run_1"
 
 
 def load_ack_model(params):

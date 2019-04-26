@@ -296,7 +296,7 @@ class Animation:
     provided sequence
     """
 
-    def __init__(self, sequence: Sequence, imp="normal"):
+    def __init__(self, sequence: Sequence, imp="normal", show_line=False):
         self.yaw = np.array(sequence['0_yaw']) % (2 * np.pi)
         self.x_array = np.array(sequence['0_X'])
         self.y_array = np.array(sequence['0_Y'])
@@ -317,20 +317,22 @@ class Animation:
         self.set_pos((0, 0))
 
         # plot
-        self.fig = plt.figure()
-        self.ax = plt.axes()
-        plt.title(f"2D motion path of {imp} profile")
-        plt.xlabel("X")
-        plt.ylabel("Y")
+        # self.fig = plt.figure()
+        # self.ax = plt.axes()
+        self.fig, self.ax = plt.subplots()
+        # plt.title(f"2D motion path of {imp} profile")
+        # plt.xlabel("X")
+        # plt.ylabel("Y")
         self.fig.set_dpi(100)
         self.fig.set_size_inches(7, 6.5)
-        plt.plot(self.x_array, self.y_array)
-        plt.plot([self.x_array[0]], [self.y_array[0]], marker='d', color="g", label="Start Point")
-        plt.plot([self.x_array[-1]], [self.y_array[-1]], marker='d', color="r", label="End Point")
+        self.line, = self.ax.plot(self.x_array, self.y_array)
+        # plt.plot([self.x_array[0]], [self.y_array[0]], marker='d', color="g", label="Start Point")
+        # plt.plot([self.x_array[-1]], [self.y_array[-1]], marker='d', color="r", label="End Point")
         self.ax.add_patch(self.robot)
         self.ax.add_patch(self.robot_head)
         plt.axis('scaled')
-        plt.legend()
+        # plt.legend()
+        self.show_line = show_line
 
     @property
     def params(self):
@@ -353,6 +355,12 @@ class Animation:
         self.robot.set_transform(t)
         self.robot_head.set_transform(t)
 
+    @staticmethod
+    def get_few_lines(data, stop, num=50):
+        stop += 1
+        start = 0 if stop < num else stop-num
+        return data[0:stop]
+
     def plot_at(self, i):
         """
         :param i: index
@@ -360,6 +368,7 @@ class Animation:
         """
         x = self.x_array[i]
         y = self.y_array[i]
+        self.line.set_data(self.x_array[0:i], self.y_array[0:i])
         t = Affine2D().rotate_around(x, y, self.yaw[i]) + self.ax.transData
         self.transform(t)
         self.set_pos((x, y))
@@ -376,6 +385,9 @@ class Animation:
 
     def animate(self, i):
         self.plot_at(i)
+        if self.show_line:
+            return self.robot, self.robot_head, self.line
+
         return self.robot, self.robot_head
 
 

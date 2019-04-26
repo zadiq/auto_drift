@@ -109,6 +109,7 @@ class Ackermann:
             Vector(1.2, -2.6, 2, keys=keys),        # 7     0.2     0.4
             Vector(2, -2, 2, keys=keys),            # 8     0.4     0.4
             Vector(1, -1, 2, keys=keys),            # 9     0.4     0.4
+            Vector(1, -1.5, 3, keys=keys),          # 10    0.39    0.37
         ]
 
     @extract_returns

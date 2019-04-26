@@ -1,0 +1,56 @@
+{
+    "action_bound": [
+        0.2
+    ],
+    "action_dim": 1,
+    "actor_activator": "tanh",
+    "actor_lr": 0.0001,
+    "actor_network": [
+        [
+            400,
+            false,
+            "relu"
+        ],
+        [
+            300,
+            false,
+            "relu"
+        ]
+    ],
+    "batch_size": 20,
+    "critic_activator": "relu",
+    "critic_last_layer": 300,
+    "critic_lr": 0.001,
+    "critic_network": [
+        [
+            400,
+            false,
+            "relu"
+        ]
+    ],
+    "desired_state": 10,
+    "drive_dur": 10,
+    "excludes": [
+        "to_json",
+        "from_json"
+    ],
+    "gamma": 0.99,
+    "layer_weights_max": 0.003,
+    "layer_weights_min": -0.003,
+    "max_episodes": 10000000,
+    "path": "/home/zadiq/dev/@p/auto_drift/data/3D/ddpg_run_1",
+    "print_interval": 10,
+    "reward_params": {
+        "sigma": 0.9
+    },
+    "reward_v": "v1",
+    "save_ep_over": -299,
+    "seed": 434,
+    "sigma": 0.001,
+    "stack_len": 1,
+    "state_dim": 3,
+    "tau": 0.001,
+    "throttle": 4,
+    "throttle_lim": 4,
+    "use_batch_norm": false
+}
